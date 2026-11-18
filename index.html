@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Neon Jump</title>
+<script src="https://yandex.ru/games/sdk/v2"></script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; user-select:none; -webkit-tap-highlight-color:transparent; }
+  html,body { height:100%; overflow:hidden; background:#0a0a14; font-family:'Segoe UI',Arial,sans-serif; }
+  #game { display:block; width:100vw; height:100vh; touch-action:none; }
+  .overlay { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; background:rgba(10,10,20,.88); color:#fff; padding:20px; z-index:10; animation:fadeIn .4s ease; }
+  .hidden { display:none !important; }
+  @keyframes fadeIn { from{opacity:0} to{opacity:1} }
+  @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.05)} }
+  @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-10px)} }
+  h1 { font-size:clamp(32px,9vw,60px); color:#0ff; text-shadow:0 0 20px #0ff,0 0 40px #0aa; margin-bottom:8px; letter-spacing:3px; animation:float 3s ease-in-out infinite; }
+  h2 { font-size:clamp(20px,5vw,32px); color:#f0f; text-shadow:0 0 15px #f0f; margin-bottom:20px; }
+  p { font-size:clamp(14px,3.5vw,18px); color:#aab; margin-bottom:20px; max-width:420px; line-height:1.5; }
+  button { background:linear-gradient(135deg,#0ff,#f0f); border:none; color:#000; font-size:clamp(16px,4vw,20px); font-weight:bold; padding:14px 40px; border-radius:30px; cursor:pointer; margin:8px; box-shadow:0 0 20px rgba(0,255,255,.5); transition:transform .1s; }
+  button:active { transform:scale(.95); }
+  #playBtn { animation:pulse 2s ease-in-out infinite; }
+  .btn2 { background:linear-gradient(135deg,#333,#555); color:#fff; box-shadow:0 0 15px rgba(255,255,255,.2); }
+  .btn-ad { background:linear-gradient(135deg,#ff0,#f80); color:#000; box-shadow:0 0 20px rgba(255,200,0,.6); }
+  .btn-ad small { display:block; font-size:11px; font-weight:normal; opacity:.8; }
+  #hud { position:absolute; top:0; left:0; right:0; padding:15px; display:flex; justify-content:space-between; color:#fff; font-size:18px; font-weight:bold; pointer-events:none; z-index:5; text-shadow:0 0 10px #0ff; }
+  #hud .hearts { color:#f44; text-shadow:0 0 10px #f44; }
+  .shop-tabs { display:flex; gap:8px; margin-bottom:15px; flex-wrap:wrap; justify-content:center; }
+  .shop-tabs button { padding:10px 20px; font-size:15px; margin:0; }
+  .shop-tabs button.active { background:linear-gradient(135deg,#f0f,#0ff); }
+  .shop-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; max-width:600px; width:100%; max-height:50vh; overflow-y:auto; padding:10px; }
+  .shop-item { background:#1a1a2e; border:2px solid #0ff4; border-radius:12px; padding:12px; }
+  .shop-item.owned { border-color:#0f0; }
+  .shop-item.selected { border-color:#f0f; box-shadow:0 0 15px #f0f; }
+  .shop-item .dot { width:40px; height:40px; border-radius:50%; margin:0 auto 8px; box-shadow:0 0 12px currentColor; }
+  .shop-item .preview { width:100%; height:50px; border-radius:8px; margin-bottom:8px; }
+  .shop-item button { padding:8px 16px; font-size:14px; margin:6px 0 0; }
+  .shop-item .desc { font-size:11px; color:#889; margin:4px 0; min-height:28px; }
+  #coins { color:#ff0; }
+  #loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:#0a0a14; color:#0ff; font-size:22px; z-index:100; text-shadow:0 0 15px #0ff; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="loading">Загрузка...</div>
+
+<div id="hud" class="hidden">
+  <div><span data-i18n="level">Уровень</span> <span id="levelNum">1</span></div>
+  <div><span data-i18n="height">Высота</span>: <span id="scoreNum">0</span></div>
+  <div><span class="hearts" id="hearts"></span> <span id="coins">🪙 0</span></div>
+</div>
+
+<div id="menu" class="overlay hidden">
+  <h1>NEON JUMP</h1>
+  <p data-i18n="menuDesc">Прыгай по платформам как можно выше. Собирай монеты, открывай скины и способности, ставь рекорды!</p>
+  <button id="playBtn" onclick="startGame()" data-i18n="play">ИГРАТЬ</button>
+  <button class="btn2" onclick="openShop()" data-i18n="shop">МАГАЗИН</button>
+  <button class="btn2" onclick="showRewardedForCoins()"><span data-i18n="freeCoins">+50 МОНЕТ ЗА РЕКЛАМУ</span><small data-i18n="watchAdHint">(посмотреть рекламный ролик)</small></button>
+</div>
+
+<div id="gameover" class="overlay hidden">
+  <h2 data-i18n="gameover">ИГРА ОКОНЧЕНА</h2>
+  <p><span data-i18n="height">Высота</span>: <span id="finalScore">0</span><br><span data-i18n="coinsCollected">Собрано монет</span>: <span id="finalCoins">0</span></p>
+  <button class="btn-ad" id="continueBtn" onclick="continueForAd()"><span data-i18n="continueAd">ПРОДОЛЖИТЬ ЗА РЕКЛАМУ</span><small data-i18n="continueHint">(сохранить прогресс и высоту)</small></button>
+  <button onclick="restartGame()"><span data-i18n="tryAgain">ЕЩЁ РАЗ</span><small style="display:block;font-size:11px;font-weight:normal;opacity:.8;" data-i18n="restartHint">(начать с нуля)</small></button>
+  <button class="btn2" onclick="goMenu()" data-i18n="menu">В МЕНЮ</button>
+</div>
+
+<div id="shop" class="overlay hidden">
+  <h2 data-i18n="shopTitle">МАГАЗИН</h2>
+  <p><span data-i18n="coinsLabel">Монеты</span>: <span id="shopCoins">0</span></p>
+  <div class="shop-tabs">
+    <button id="tabSkins" class="active" onclick="switchTab('skins')" data-i18n="tabSkins">СКИНЫ</button>
+    <button id="tabBackgrounds" onclick="switchTab('backgrounds')" data-i18n="tabBg">ФОНЫ</button>
+    <button id="tabAbilities" onclick="switchTab('abilities')" data-i18n="tabAbilities">СПОСОБНОСТИ</button>
+  </div>
+  <div class="shop-grid" id="shopGrid"></div>
+  <button class="btn2" onclick="closeShop()" style="margin-top:20px;" data-i18n="back">НАЗАД</button>
+</div>
+
+<script>
+const TRANSLATIONS = {
+  ru: { level:'Уровень', height:'Высота', menuDesc:'Прыгай по платформам как можно выше. Собирай монеты, открывай скины и способности, ставь рекорды!', play:'ИГРАТЬ', shop:'МАГАЗИН', freeCoins:'+50 МОНЕТ ЗА РЕКЛАМУ', watchAdHint:'(посмотреть рекламный ролик)', gameover:'ИГРА ОКОНЧЕНА', coinsCollected:'Собрано монет', continueAd:'ПРОДОЛЖИТЬ ЗА РЕКЛАМУ', continueHint:'(сохранить прогресс и высоту)', tryAgain:'ЕЩЁ РАЗ', restartHint:'(начать с нуля)', menu:'В МЕНЮ', shopTitle:'МАГАЗИН', coinsLabel:'Монеты', back:'НАЗАД', selected:'ВЫБРАН', choose:'ВЫБРАТЬ', buy:'КУПИТЬ', tabSkins:'СКИНЫ', tabBg:'ФОНЫ', tabAbilities:'СПОСОБНОСТИ', notEnough:'Недостаточно монет!', adFail:'Реклама недоступна', loading:'Загрузка...', continueUsed:'Продолжение уже использовано', descMagnet:'Притягивает монеты', descDoubleJump:'Второй прыжок в воздухе', descSecondChance:'Возрождение 1 раз за раунд' },
+  en: { level:'Level', height:'Height', menuDesc:'Jump across platforms as high as you can!', play:'PLAY', shop:'SHOP', freeCoins:'+50 COINS FOR AD', watchAdHint:'(watch ad)', gameover:'GAME OVER', coinsCollected:'Coins collected', continueAd:'CONTINUE FOR AD', continueHint:'(keep progress)', tryAgain:'TRY AGAIN', restartHint:'(start over)', menu:'MENU', shopTitle:'SHOP', coinsLabel:'Coins', back:'BACK', selected:'SELECTED', choose:'SELECT', buy:'BUY', tabSkins:'SKINS', tabBg:'BACKGROUNDS', tabAbilities:'ABILITIES', notEnough:'Not enough coins!', adFail:'Ad not available', loading:'Loading...', continueUsed:'Continue already used', descMagnet:'Attracts coins', descDoubleJump:'Double jump in air', descSecondChance:'Revive once per run' }
+};
+let LANG = 'ru';
+function t(key) { return TRANSLATIONS[LANG][key] || TRANSLATIONS.ru[key] || key; }
+function applyI18n() { document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.getAttribute('data-i18n')); }); const l = document.getElementById('loading'); if (l) l.textContent = t('loading'); }
+applyI18n();
+
+let ysdk = null, sdkReady = false, playerData = null;
+
+async function initSDK() {
+  try {
+    ysdk = await YaGames.init();
+    sdkReady = true;
+    const lang = ysdk.environment.i18n.lang;
+    LANG = (lang && lang.startsWith('ru')) ? 'ru' : 'en';
+    applyI18n();
+    try {
+      playerData = await ysdk.getPlayer({ scopes: false });
+      const cloudSave = await playerData.getData(['save']);
+      if (cloudSave && cloudSave.save) player = Object.assign(player, cloudSave.save);
+      else { try { const local = localStorage.getItem('neonjump_save'); if (local) player = JSON.parse(local); } catch(e){} }
+    } catch(e) { console.warn('Cloud save load failed', e); }
+    document.getElementById('loading').classList.add('hidden');
+    document.getElementById('menu').classList.remove('hidden');
+  } catch (e) {
+    console.warn('SDK init failed, fallback', e);
+    try { const local = localStorage.getItem('neonjump_save'); if (local) player = JSON.parse(local); } catch(e){}
+    document.getElementById('loading').classList.add('hidden');
+    document.getElementById('menu').classList.remove('hidden');
+  }
+}
+initSDK();
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W, H;
+function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+window.addEventListener('resize', resize);
+resize();
+
+let player = { coins:0, totalScore:0, selectedSkin:0, ownedSkins:[0], runs:0, selectedBg:0, ownedBgs:[0], abilities:{ magnet:false, doubleJump:false, secondChance:false } };
+
+function save() {
+  try { localStorage.setItem('neonjump_save', JSON.stringify(player)); } catch(e){}
+  if (sdkReady && playerData) playerData.setData({ save: player }).catch(e => console.warn('Cloud save failed', e));
+}
+
+const SKINS = [
+  { name:'Neon', color:'#0ff', glow:'#0ff', price:0 },
+  { name:'Magenta', color:'#f0f', glow:'#f0f', price:50 },
+  { name:'Lime', color:'#0f0', glow:'#0f0', price:100 },
+  { name:'Gold', color:'#ff0', glow:'#ff0', price:200 },
+  { name:'Fire', color:'#f60', glow:'#f60', price:350 },
+  { name:'Ice', color:'#8cf', glow:'#8cf', price:500 }
+];
+const BACKGROUNDS = [
+  { name:'Космос', nameEn:'Space', colors:['#0a0a20','#1a0a2e'], star:'#ffffff', price:0 },
+  { name:'Закат', nameEn:'Sunset', colors:['#2a0a20','#4a1a10'], star:'#ffaa55', price:100 },
+  { name:'Матрица', nameEn:'Matrix', colors:['#001a00','#002200'], star:'#00ff44', price:200 },
+  { name:'Лава', nameEn:'Lava', colors:['#1a0000','#3a0a00'], star:'#ff4400', price:300 }
+];
+const ABILITIES = [
+  { key:'magnet', price:150, nameRu:'Магнит', nameEn:'Magnet' },
+  { key:'doubleJump', price:250, nameRu:'Двойной прыжок', nameEn:'Double Jump' },
+  { key:'secondChance', price:400, nameRu:'Второй шанс', nameEn:'Second Chance' }
+];
+
+let state = 'menu';
+let camera = 0, platforms = [], coinsArr = [], particles = [], enemies = [];
+let playerObj = { x:0, y:0, vx:0, vy:0, w:40, h:40, jumpsLeft:1 };
+let score = 0, runCoins = 0, level = 1, maxHeight = 0;
+let keys = { left:false, right:false };
+let tiltX = 0, useTilt = false;
+let continueUsedThisRun = false;
+let secondChanceUsed = false;
+let menuAnimT = 0;
+let currentShopTab = 'skins';
+
+function getJumpsMax() { return player.abilities.doubleJump ? 2 : 1; }
+
+function initLevel() {
+  platforms = []; coinsArr = []; particles = []; enemies = [];
+  camera = 0; score = 0; runCoins = 0; maxHeight = 0;
+  continueUsedThisRun = false; secondChanceUsed = false;
+  document.getElementById('continueBtn').style.display = 'block';
+
+  platforms.push({ x: W/2 - 60, y: H - 120, w:120, h:20, type:'normal' });
+  let y = H - 120, lastX = W/2 - 60;
+  for (let i = 0; i < 40; i++) {
+    y -= 110 + Math.random()*40;
+    let x = lastX + (Math.random()*2 - 1) * 160;
+    x = Math.max(10, Math.min(W - 120, x));
+    lastX = x;
+    const r = Math.random();
+    const type = r < 0.1 ? 'moving' : (r < 0.25 ? 'fragile' : 'normal');
+    platforms.push({ x, y, w:110, h:18, type, baseX:x, phase:Math.random()*Math.PI*2 });
+    if (Math.random() < 0.5) coinsArr.push({ x:x+55, y:y-35, r:12, collected:false, phase:Math.random()*6 });
+    if (i > 2 && Math.random() < 0.15 && type === 'normal') enemies.push({ x:x+40, y:y-24, r:14, baseX:x+40, phase:Math.random()*6 });
+  }
+  playerObj = { x:W/2 - 20, y:H - 160, vx:0, vy:0, w:40, h:40, jumpsLeft: getJumpsMax() };
+  state = 'playing';
+  document.getElementById('hud').classList.remove('hidden');
+  updateHearts();
+}
+
+function updateHearts() {
+  const el = document.getElementById('hearts');
+  if (!player.abilities.secondChance) { el.textContent = ''; return; }
+  el.textContent = secondChanceUsed ? '💔' : '❤️';
+}
+
+function update() {
+  if (state !== 'playing') { menuAnimT += 0.02; return; }
+  let move = 0;
+  if (keys.left) move -= 1;
+  if (keys.right) move += 1;
+  if (useTilt && Math.abs(tiltX) > 2) move = Math.max(-1, Math.min(1, tiltX / 20));
+  playerObj.vx += move * 1.8;
+  playerObj.vx *= 0.92;
+  playerObj.vx = Math.max(-8, Math.min(8, playerObj.vx));
+  if (Math.abs(playerObj.vx) < 0.1) playerObj.vx = 0;
+  playerObj.vy += 0.55;
+
+  if (playerObj.vy > 0) {
+    for (const p of platforms) {
+      if (p.type === 'moving') p.x = p.baseX + Math.sin(Date.now()/1000 + p.phase) * 60;
+      if (playerObj.x + playerObj.w > p.x && playerObj.x < p.x + p.w && playerObj.y + playerObj.h > p.y && playerObj.y + playerObj.h < p.y + p.h + 20) {
+        playerObj.y = p.y - playerObj.h;
+        playerObj.vy = -14;
+        playerObj.jumpsLeft = getJumpsMax();
+        if (p.type === 'fragile' && !p.broken) { p.broken = true; p.fade = 1; }
+        break;
+      }
+    }
+  }
+  platforms = platforms.filter(p => { if (p.broken) { p.fade -= 0.05; return p.fade > 0; } return true; });
+
+  for (const e of enemies) {
+    e.x = e.baseX + Math.sin(Date.now()/800 + e.phase) * 25;
+    if (Math.abs(e.x - (playerObj.x + 20)) < 28 && Math.abs(e.y - (playerObj.y + 20)) < 28) { killPlayer(); return; }
+  }
+
+  playerObj.x += playerObj.vx;
+  playerObj.y += playerObj.vy;
+  if (playerObj.x < 0) { playerObj.x = 0; playerObj.vx = 0; }
+  if (playerObj.x + playerObj.w > W) { playerObj.x = W - playerObj.w; playerObj.vx = 0; }
+
+  if (playerObj.y < H * 0.4) {
+    const diff = H * 0.4 - playerObj.y;
+    playerObj.y = H * 0.4;
+    camera += diff; score += Math.floor(diff); maxHeight = Math.max(maxHeight, score);
+    for (const p of platforms) p.y += diff;
+    for (const c of coinsArr) c.y += diff;
+    for (const e of enemies) e.y += diff;
+  }
+
+  const magnetR = player.abilities.magnet ? 120 : 0;
+  for (const c of coinsArr) {
+    if (c.collected) continue;
+    const dx = (playerObj.x + 20) - c.x, dy = (playerObj.y + 20) - c.y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    if (magnetR > 0 && dist < magnetR && dist > 1) { c.x += (dx / dist) * 6; c.y += (dy / dist) * 6; }
+    if (Math.abs(c.x - (playerObj.x + 20)) < 30 && Math.abs(c.y - (playerObj.y + 20)) < 30) { c.collected = true; runCoins += 1; spawnParticles(c.x, c.y, '#ff0'); }
+  }
+
+  for (const pt of particles) { pt.x += pt.vx; pt.y += pt.vy; pt.vy += 0.2; pt.life -= 0.02; }
+  particles = particles.filter(pt => pt.life > 0);
+
+  // Уровень растёт каждые 2000 высоты
+const newLevel = Math.floor(score / 2000) + 1;
+if (newLevel > level) level = newLevel;
+
+// Подгружаем платформы, пока их не станет достаточно впереди игрока
+// Самая верхняя (минимальная y) платформа должна быть выше игрока минимум на 800 px
+let safety = 0;
+while (safety < 50) {
+  safety++;
+  const topPlatform = platforms.reduce((a,b) => a.y < b.y ? a : b);
+  if (topPlatform.y < playerObj.y - 800) break; // уже достаточно платформ выше
+  let topY = topPlatform.y;
+  let lastX2 = topPlatform.x;
+  for (let i = 0; i < 10; i++) {
+    topY -= 110 + Math.random()*40;
+    let x = lastX2 + (Math.random()*2 - 1) * 160;
+    x = Math.max(10, Math.min(W - 120, x));
+    lastX2 = x;
+    const r = Math.random();
+    const type = r < 0.1 ? 'moving' : (r < 0.25 ? 'fragile' : 'normal');
+    platforms.push({ x, y:topY, w:110, h:18, type, baseX:x, phase:Math.random()*Math.PI*2 });
+    if (Math.random() < 0.5) coinsArr.push({ x:x+55, y:topY-35, r:12, collected:false, phase:0 });
+    if (Math.random() < 0.2) enemies.push({ x:x+40, y:topY-24, r:14, baseX:x+40, phase:Math.random()*6 });
+  }
+}
+
+// Удаляем платформы, которые давно ушли вниз за экран (оптимизация)
+platforms = platforms.filter(p => p.y < H + 300);
+coinsArr = coinsArr.filter(c => c.y < H + 300);
+enemies = enemies.filter(e => e.y < H + 300);
+
+  if (playerObj.y > H + 100) killPlayer();
+  document.getElementById('scoreNum').textContent = maxHeight;
+  document.getElementById('levelNum').textContent = level;
+  document.getElementById('coins').textContent = '🪙 ' + (player.coins + runCoins);
+}
+
+function killPlayer() {
+  if (player.abilities.secondChance && !secondChanceUsed) {
+    secondChanceUsed = true;
+    if (platforms.length > 0) {
+      const lowest = platforms.reduce((a,b) => a.y > b.y ? a : b);
+      playerObj.y = lowest.y - 40;
+      playerObj.x = Math.max(0, Math.min(W - playerObj.w, lowest.x + lowest.w/2 - playerObj.w/2));
+      playerObj.vy = -14; playerObj.jumpsLeft = getJumpsMax();
+      updateHearts();
+      spawnParticles(playerObj.x + 20, playerObj.y + 20, '#0f0');
+      return;
+    }
+  }
+  endGame();
+}
+function draw() {
+  const bg = BACKGROUNDS[player.selectedBg] || BACKGROUNDS[0];
+  const grd = ctx.createLinearGradient(0, 0, 0, H);
+  grd.addColorStop(0, bg.colors[0]); grd.addColorStop(1, bg.colors[1]);
+  ctx.fillStyle = grd; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = bg.star; ctx.globalAlpha = 0.4;
+  for (let i = 0; i < 60; i++) {
+    const sx = (i*137.5)%W;
+    const sy = (i*91.7 + camera*0.1 + (state==='menu'?menuAnimT*30:0))%H;
+    ctx.fillRect(sx, sy, (i%3===0)?3:2, (i%3===0)?3:2);
+  }
+  ctx.globalAlpha = 1;
+
+  if (state === 'menu') {
+    const cx = W/2, cy = H/2 + 80 + Math.sin(menuAnimT*2)*15;
+    const skin = SKINS[player.selectedSkin];
+    ctx.shadowColor = skin.glow; ctx.shadowBlur = 25; ctx.fillStyle = skin.color;
+    ctx.fillRect(cx-20, cy-20, 40, 40);
+    ctx.shadowBlur = 0;
+    return;
+  }
+  if (state !== 'playing' && state !== 'gameover') return;
+
+  for (const p of platforms) {
+    ctx.globalAlpha = p.broken ? p.fade : 1;
+    if (p.type === 'fragile') { ctx.strokeStyle = '#f66'; ctx.lineWidth = 3; ctx.shadowColor = '#f66'; ctx.shadowBlur = 15; ctx.strokeRect(p.x, p.y, p.w, p.h); }
+    else if (p.type === 'moving') { ctx.fillStyle = '#f0f'; ctx.shadowColor = '#f0f'; ctx.shadowBlur = 15; ctx.fillRect(p.x, p.y, p.w, p.h); }
+    else { ctx.fillStyle = '#0ff'; ctx.shadowColor = '#0ff'; ctx.shadowBlur = 15; ctx.fillRect(p.x, p.y, p.w, p.h); }
+    ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+  }
+
+  for (const c of coinsArr) {
+    if (c.collected) continue;
+    c.phase += 0.05;
+    const scale = Math.abs(Math.cos(c.phase));
+    ctx.save(); ctx.translate(c.x, c.y); ctx.scale(scale, 1);
+    ctx.fillStyle = '#ff0'; ctx.shadowColor = '#ff0'; ctx.shadowBlur = 15;
+    ctx.beginPath(); ctx.arc(0, 0, c.r, 0, Math.PI*2); ctx.fill(); ctx.restore();
+    ctx.shadowBlur = 0;
+  }
+
+  for (const e of enemies) {
+    ctx.save(); ctx.translate(e.x, e.y); ctx.rotate(Math.PI/4);
+    ctx.fillStyle = '#f22'; ctx.shadowColor = '#f22'; ctx.shadowBlur = 20;
+    ctx.fillRect(-e.r, -e.r, e.r*2, e.r*2);
+    ctx.restore();
+    ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(e.x, e.y, 3, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  for (const pt of particles) {
+    ctx.globalAlpha = pt.life; ctx.fillStyle = pt.color;
+    ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.r, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  const skin = SKINS[player.selectedSkin];
+  ctx.shadowColor = skin.glow; ctx.shadowBlur = 25; ctx.fillStyle = skin.color;
+  const px = playerObj.x, py = playerObj.y, pw = playerObj.w, ph = playerObj.h, r = 8;
+  ctx.beginPath();
+  ctx.moveTo(px+r, py); ctx.lineTo(px+pw-r, py);
+  ctx.quadraticCurveTo(px+pw, py, px+pw, py+r);
+  ctx.lineTo(px+pw, py+ph-r); ctx.quadraticCurveTo(px+pw, py+ph, px+pw-r, py+ph);
+  ctx.lineTo(px+r, py+ph); ctx.quadraticCurveTo(px, py+ph, px, py+ph-r);
+  ctx.lineTo(px, py+r); ctx.quadraticCurveTo(px, py, px+r, py);
+  ctx.closePath(); ctx.fill(); ctx.shadowBlur = 0;
+  ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.arc(px+13, py+15, 3, 0, Math.PI*2); ctx.arc(px+27, py+15, 3, 0, Math.PI*2); ctx.fill();
+}
+
+function spawnParticles(x, y, color) {
+  for (let i = 0; i < 8; i++) particles.push({ x, y, vx:(Math.random()-0.5)*6, vy:(Math.random()-0.5)*6-2, r:Math.random()*4+2, color, life:1 });
+}
+
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+loop();
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = true;
+  if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = true;
+  if ((e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W' || e.key === ' ') && state === 'playing' && playerObj.jumpsLeft > 1) {
+    playerObj.vy = -13; playerObj.jumpsLeft--; spawnParticles(playerObj.x + 20, playerObj.y + 40, '#0ff');
+  }
+});
+document.addEventListener('keyup', e => {
+  if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = false;
+  if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = false;
+});
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const tx = e.touches[0].clientX, ty = e.touches[0].clientY;
+  if (state === 'playing') {
+    if (ty < H/2) { if (playerObj.jumpsLeft > 1) { playerObj.vy = -13; playerObj.jumpsLeft--; spawnParticles(playerObj.x + 20, playerObj.y + 40, '#0ff'); } }
+    else { if (tx < W/2) keys.left = true; else keys.right = true; }
+  }
+}, { passive:false });
+canvas.addEventListener('touchend', e => { e.preventDefault(); keys.left = false; keys.right = false; }, { passive:false });
+canvas.addEventListener('mousedown', e => {
+  if (state === 'playing') {
+    if (e.clientY < H/2) { if (playerObj.jumpsLeft > 1) { playerObj.vy = -13; playerObj.jumpsLeft--; spawnParticles(playerObj.x + 20, playerObj.y + 40, '#0ff'); } }
+    else { if (e.clientX < W/2) keys.left = true; else keys.right = true; }
+  }
+});
+canvas.addEventListener('mouseup', () => { keys.left = false; keys.right = false; });
+window.addEventListener('deviceorientation', e => { if (e.gamma !== null) { tiltX = e.gamma; useTilt = true; } });
+
+function showInterstitial() {
+  if (!sdkReady) return;
+  try { ysdk.adv.showFullscreenAdv({ callbacks: { onClose: () => {}, onError: (e) => console.warn('Interstitial error', e) } }); } catch(e) { console.warn('Interstitial failed', e); }
+}
+
+function showRewarded(callback) {
+  if (!sdkReady) { callback(false); return; }
+  let rewarded = false;
+  try {
+    ysdk.adv.showRewardedVideo({ callbacks: {
+      onOpen: () => {}, onRewarded: () => { rewarded = true; },
+      onClose: () => { callback(rewarded); },
+      onError: (e) => { console.warn('Rewarded error', e); callback(false); }
+    }});
+  } catch(e) { console.warn('Rewarded failed', e); callback(false); }
+}
+
+function showRewardedForCoins() {
+  showRewarded((ok) => {
+    if (ok) { player.coins += 50; save(); updateShopCoins(); alert('+50 монет!'); }
+    else alert(t('adFail'));
+  });
+}
+
+function continueForAd() {
+  if (continueUsedThisRun) { alert(t('continueUsed')); return; }
+  showRewarded((ok) => {
+    if (ok) {
+      continueUsedThisRun = true;
+      document.getElementById('continueBtn').style.display = 'none';
+      if (platforms.length > 0) {
+        const lowest = platforms.reduce((a,b) => a.y > b.y ? a : b);
+        playerObj.y = lowest.y - 200;
+        playerObj.vy = -14;
+        playerObj.x = Math.max(0, Math.min(W - playerObj.w, lowest.x + lowest.w/2 - playerObj.w/2));
+      } else { playerObj.y = H - 200; playerObj.vy = -14; }
+      state = 'playing';
+      document.getElementById('gameover').classList.add('hidden');
+      document.getElementById('hud').classList.remove('hidden');
+    } else alert(t('adFail'));
+  });
+}
+
+function startGame() {
+  document.getElementById('menu').classList.add('hidden');
+  document.getElementById('gameover').classList.add('hidden');
+  document.getElementById('shop').classList.add('hidden');
+  level = 1;
+  initLevel();
+}
+
+function endGame() {
+  state = 'gameover';
+  player.coins += runCoins;
+  player.totalScore = Math.max(player.totalScore, maxHeight);
+  player.runs = (player.runs || 0) + 1;
+  save();
+  document.getElementById('finalScore').textContent = maxHeight;
+  document.getElementById('finalCoins').textContent = runCoins;
+  document.getElementById('gameover').classList.remove('hidden');
+  document.getElementById('hud').classList.add('hidden');
+  if (player.runs % 3 === 0) showInterstitial();
+}
+
+function restartGame() { startGame(); }
+
+function goMenu() {
+  state = 'menu';
+  document.getElementById('gameover').classList.add('hidden');
+  document.getElementById('hud').classList.add('hidden');
+  document.getElementById('menu').classList.remove('hidden');
+}
+
+function openShop() {
+  document.getElementById('menu').classList.add('hidden');
+  document.getElementById('gameover').classList.add('hidden');
+  document.getElementById('shop').classList.remove('hidden');
+  renderShop();
+}
+
+function closeShop() {
+  document.getElementById('shop').classList.add('hidden');
+  if (state === 'gameover') document.getElementById('gameover').classList.remove('hidden');
+  else document.getElementById('menu').classList.remove('hidden');
+}
+
+function updateShopCoins() {
+  const el = document.getElementById('shopCoins');
+  if (el) el.textContent = player.coins;
+  const c = document.getElementById('coins');
+  if (c) c.textContent = '🪙 ' + (player.coins + (state === 'playing' ? runCoins : 0));
+}
+
+function switchTab(tab) {
+  currentShopTab = tab;
+  document.getElementById('tabSkins').classList.toggle('active', tab === 'skins');
+  document.getElementById('tabBackgrounds').classList.toggle('active', tab === 'backgrounds');
+  document.getElementById('tabAbilities').classList.toggle('active', tab === 'abilities');
+  renderShop();
+}
+
+function renderShop() {
+  updateShopCoins();
+  const grid = document.getElementById('shopGrid');
+  grid.innerHTML = '';
+  if (currentShopTab === 'skins') {
+    SKINS.forEach((skin, i) => {
+      const owned = player.ownedSkins.includes(i);
+      const selected = player.selectedSkin === i;
+      const div = document.createElement('div');
+      div.className = 'shop-item' + (owned ? ' owned' : '') + (selected ? ' selected' : '');
+      div.innerHTML = '<div class="dot" style="background:'+skin.color+';color:'+skin.glow+'"></div><div style="font-size:14px;margin-bottom:4px;">'+skin.name+'</div>' +
+        (owned ? (selected ? '<button class="btn2" disabled style="opacity:.7">'+t('selected')+'</button>' : '<button onclick="selectSkin('+i+')">'+t('choose')+'</button>') : '<button onclick="buySkin('+i+')">'+skin.price+' 🪙</button>');
+      grid.appendChild(div);
+    });
+  } else if (currentShopTab === 'backgrounds') {
+    BACKGROUNDS.forEach((bg, i) => {
+      const owned = player.ownedBgs.includes(i);
+      const selected = player.selectedBg === i;
+      const name = LANG === 'ru' ? bg.name : bg.nameEn;
+      const div = document.createElement('div');
+      div.className = 'shop-item' + (owned ? ' owned' : '') + (selected ? ' selected' : '');
+      div.innerHTML = '<div class="preview" style="background:linear-gradient(135deg,'+bg.colors[0]+','+bg.colors[1]+')"></div><div style="font-size:14px;margin-bottom:4px;">'+name+'</div>' +
+        (owned ? (selected ? '<button class="btn2" disabled style="opacity:.7">'+t('selected')+'</button>' : '<button onclick="selectBg('+i+')">'+t('choose')+'</button>') : '<button onclick="buyBg('+i+')">'+bg.price+' 🪙</button>');
+      grid.appendChild(div);
+    });
+  } else if (currentShopTab === 'abilities') {
+    ABILITIES.forEach((ab) => {
+      const owned = player.abilities[ab.key];
+      const name = LANG === 'ru' ? ab.nameRu : ab.nameEn;
+      const desc = ab.key === 'magnet' ? t('descMagnet') : (ab.key === 'doubleJump' ? t('descDoubleJump') : t('descSecondChance'));
+      const div = document.createElement('div');
+      div.className = 'shop-item' + (owned ? ' owned' : '');
+      div.innerHTML = '<div style="font-size:14px;margin-bottom:4px;">'+name+'</div><div class="desc">'+desc+'</div>' +
+        (owned ? '<button class="btn2" disabled style="opacity:.7">'+t('selected')+'</button>' : '<button onclick="buyAbility(\''+ab.key+'\','+ab.price+')">'+ab.price+' 🪙</button>');
+      grid.appendChild(div);
+    });
+  }
+}
+
+function buySkin(i) {
+  const skin = SKINS[i];
+  if (player.coins >= skin.price && !player.ownedSkins.includes(i)) {
+    player.coins -= skin.price; player.ownedSkins.push(i); player.selectedSkin = i;
+    save(); renderShop();
+  } else if (player.coins < skin.price) alert(t('notEnough'));
+}
+function selectSkin(i) { player.selectedSkin = i; save(); renderShop(); }
+
+function buyBg(i) {
+  const bg = BACKGROUNDS[i];
+  if (player.coins >= bg.price && !player.ownedBgs.includes(i)) {
+    player.coins -= bg.price; player.ownedBgs.push(i); player.selectedBg = i;
+    save(); renderShop();
+  } else if (player.coins < bg.price) alert(t('notEnough'));
+}
+function selectBg(i) { player.selectedBg = i; save(); renderShop(); }
+
+function buyAbility(key, price) {
+  if (player.coins >= price && !player.abilities[key]) {
+    player.coins -= price; player.abilities[key] = true;
+    save(); renderShop();
+  } else if (player.coins < price) alert(t('notEnough'));
+}
+</script>
+</body>
+</html>
